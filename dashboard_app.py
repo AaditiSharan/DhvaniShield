@@ -13,6 +13,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
 import uvicorn
+import socket
 
 TARGET_RATE = 16000
 VAD_THRESHOLD = 0.55
@@ -515,5 +516,14 @@ async def telemetry_feed(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
 
+def get_free_port(preferred=8000):
+    for port in range(preferred, preferred + 10):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("127.0.0.1", port)) != 0:
+                return port
+    raise RuntimeError("No free port found")
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    port = get_free_port(8000)
+    print(f"[*] Binding on port {port}")
+    uvicorn.run(app, host="127.0.0.1", port=port)
