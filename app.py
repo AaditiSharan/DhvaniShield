@@ -158,7 +158,7 @@ def get_dashboard():
     </head>
     <body class="bg-slate-950 text-slate-100 min-h-screen font-sans flex flex-col justify-between">
 
-        <header class="border-b border-slate-800 bg-slate-900/80 px-8 py-4 flex justify-between items-center">
+        <header class="border-b border-slate-800 bg-slate-900/80 px-8 py-4 flex justify-between items-center"> 
             <div class="flex items-center space-x-3">
                 <div class="w-3 h-3 rounded-full bg-cyan-400"></div>
                 <h1 class="text-lg font-bold uppercase tracking-wider text-cyan-400">AegisVoice Call Defense</h1>
