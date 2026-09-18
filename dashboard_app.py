@@ -5,6 +5,7 @@ import json
 import queue
 import threading
 import time
+import socket
 import numpy as np
 import sounddevice as sd
 import torch
@@ -13,7 +14,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
 import uvicorn
-import socket
 
 TARGET_RATE = 16000
 VAD_THRESHOLD = 0.55
@@ -24,11 +24,11 @@ SILENCE_PAD_FRAMES = 16
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 print("=" * 60)
-print("       VOICE SENTINEL FORENSIC COCKPIT + OSCILLOSCOPE")
+print("     VOICE SENTINEL : ZERO-FREEZE TELEMETRY ENGINE")
 print(f" Compute Device: {device.upper()}")
 print("=" * 60)
 
-# Load Models
+# 1. Load Neural Models
 print("[*] Loading Neural VAD (Silero)...")
 vad_model, _ = torch.hub.load('snakers4/silero-vad', 'silero_vad', trust_repo=True)
 vad_model.to(device).eval()
@@ -39,8 +39,10 @@ feature_extractor = AutoFeatureExtractor.from_pretrained(MODEL_NAME)
 deepfake_model = AutoModelForAudioClassification.from_pretrained(MODEL_NAME).to(device)
 deepfake_model.eval()
 
+# Thread-safe queues
 telemetry_queue = asyncio.Queue()
 raw_audio_queue = queue.Queue()
+inference_queue = queue.Queue()
 
 def audio_callback(indata, frames, time_info, status):
     raw_audio_queue.put(indata[:, 0].copy())
@@ -74,12 +76,12 @@ def start_safe_audio_stream():
                 callback=audio_callback
             )
             test_stream.start()
-            print(f"[✔] Successfully bound to: [{idx}] {name} via {hostapi} ({rate} Hz)")
+            print(f"[✔] Linked to Device [{idx}] {name} via {hostapi} ({rate} Hz)")
             return test_stream, rate, block
         except Exception:
             continue
 
-    raise RuntimeError("Could not bind to CABLE Output.")
+    raise RuntimeError("Could not open CABLE Output stream.")
 
 HTML_CONTENT = """
 <!DOCTYPE html>
@@ -283,7 +285,6 @@ HTML_CONTENT = """
         <div class="card">
             <div id="statusBadge" class="status-indicator">● Standby &mdash; Monitoring Line</div>
 
-            <!-- Real-Time Frequency/Waveform Oscilloscope -->
             <div class="visualizer-card">
                 <div class="visualizer-label">Live Signal Stream (48 kHz WASAPI)</div>
                 <canvas id="scopeCanvas" width="700" height="90"></canvas>
@@ -329,7 +330,6 @@ HTML_CONTENT = """
         function drawWaveform() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // Subtle center baseline
             ctx.beginPath();
             ctx.strokeStyle = '#cbd5e1';
             ctx.lineWidth = 1;
@@ -337,7 +337,6 @@ HTML_CONTENT = """
             ctx.lineTo(canvas.width, canvas.height / 2);
             ctx.stroke();
 
-            // Active frequency oscillation line
             ctx.beginPath();
             ctx.strokeStyle = '#2563eb';
             ctx.lineWidth = 2.2;
@@ -347,7 +346,7 @@ HTML_CONTENT = """
             let x = 0;
 
             for (let i = 0; i < wavePoints.length; i++) {
-                const normalized = wavePoints[i]; // Value roughly -1.0 to 1.0
+                const normalized = wavePoints[i];
                 const y = (canvas.height / 2) - (normalized * (canvas.height / 2) * 1.8);
 
                 if (i === 0) {
@@ -408,6 +407,33 @@ HTML_CONTENT = """
 </html>
 """
 
+# Dedicated Background Inference Worker (Runs heavy Wav2Vec2 without blocking the audio stream)
+def inference_worker(loop):
+    while True:
+        utterance_16k, timestamp_str = inference_queue.get()
+        try:
+            inputs = feature_extractor(utterance_16k, sampling_rate=TARGET_RATE, return_tensors="pt")
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+
+            with torch.no_grad():
+                logits = deepfake_model(**inputs).logits
+                probs = torch.softmax(logits, dim=-1)[0]
+
+            spoof_pct = float(probs[1]) * 100
+            bonafide_pct = float(probs[0]) * 100
+
+            payload = {
+                "type": "verdict",
+                "spoof": spoof_pct,
+                "bonafide": bonafide_pct,
+                "duration": round(len(utterance_16k) / TARGET_RATE, 2),
+                "time": timestamp_str
+            }
+            asyncio.run_coroutine_threadsafe(telemetry_queue.put(payload), loop)
+        except Exception as e:
+            pass
+
+# High-frequency Audio Loop (Exclusively pumps waveforms and collects utterances)
 def audio_worker(loop):
     stream, native_rate, frame_size = start_safe_audio_stream()
     resampler = T.Resample(orig_freq=native_rate, new_freq=TARGET_RATE).to(device)
@@ -423,7 +449,7 @@ def audio_worker(loop):
             frame = raw_audio_queue.get()
             frame_counter += 1
 
-            # Broadcast downsampled waveform points to the visualizer at ~20 fps
+            # High-FPS streaming to browser (never blocked)
             if frame_counter % 2 == 0:
                 downsampled = frame[::max(1, len(frame) // 64)][:64]
                 wave_payload = {
@@ -464,24 +490,8 @@ def audio_worker(loop):
                     utterance_tensor = torch.from_numpy(full_utterance_native).to(device)
                     utterance_16k = resampler(utterance_tensor).cpu().numpy()
 
-                    inputs = feature_extractor(utterance_16k, sampling_rate=TARGET_RATE, return_tensors="pt")
-                    inputs = {k: v.to(device) for k, v in inputs.items()}
-
-                    with torch.no_grad():
-                        logits = deepfake_model(**inputs).logits
-                        probs = torch.softmax(logits, dim=-1)[0]
-
-                    spoof_pct = float(probs[1]) * 100
-                    bonafide_pct = float(probs[0]) * 100
-
-                    payload = {
-                        "type": "verdict",
-                        "spoof": spoof_pct,
-                        "bonafide": bonafide_pct,
-                        "duration": round(len(utterance_16k) / TARGET_RATE, 2),
-                        "time": time.strftime("%H:%M:%S")
-                    }
-                    asyncio.run_coroutine_threadsafe(telemetry_queue.put(payload), loop)
+                    # Hand off utterance immediately to inference thread without waiting
+                    inference_queue.put((utterance_16k, time.strftime("%H:%M:%S")))
 
                     speech_buffer = []
                     silence_frames = 0
@@ -498,6 +508,7 @@ def audio_worker(loop):
 async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
     threading.Thread(target=audio_worker, args=(loop,), daemon=True).start()
+    threading.Thread(target=inference_worker, args=(loop,), daemon=True).start()
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -523,7 +534,7 @@ def get_free_port(preferred=8000):
                 return port
     raise RuntimeError("No free port found")
 
-if __name__ == "__main__":
+if __name__ == "_main_":
     port = get_free_port(8000)
     print(f"[*] Binding on port {port}")
     uvicorn.run(app, host="127.0.0.1", port=port)
