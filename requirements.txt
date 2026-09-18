@@ -6,3 +6,4 @@ transformers
 silero-vad
 sounddevice
 numpy
+PortAudio
