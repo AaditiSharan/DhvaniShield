@@ -14,6 +14,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
 import uvicorn
+from silero_vad import load_silero_vad
 
 TARGET_RATE = 16000
 VAD_THRESHOLD = 0.55
@@ -30,7 +31,8 @@ print("=" * 60)
 
 # 1. Load Neural Models
 print("[*] Loading Neural VAD (Silero)...")
-vad_model, _ = torch.hub.load('snakers4/silero-vad', 'silero_vad', trust_repo=True)
+#vad_model, _ = torch.hub.load('snakers4/silero-vad', 'silero_vad', trust_repo=True)
+vad_model = load_silero_vad()
 vad_model.to(device).eval()
 
 print("[*] Loading Deepfake Transformer (Wav2Vec2)...")
@@ -534,7 +536,7 @@ def get_free_port(preferred=8000):
                 return port
     raise RuntimeError("No free port found")
 
-if __name__ == "_main_":
+if __name__ == "__main__":
     port = get_free_port(8000)
     print(f"[*] Binding on port {port}")
     uvicorn.run(app, host="127.0.0.1", port=port)
