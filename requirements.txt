@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+torch
+torchaudio
+transformers
+silero-vad
+sounddevice
+numpy
+
